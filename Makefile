@@ -13,13 +13,17 @@ lib: svm.o
 	fi; \
 	$(CXX) $${SHARED_LIB_FLAG} svm.o -o libsvm.so.$(SHVER)
 
-svm-predict: svm-predict.c svm.o
-	$(CXX) $(CFLAGS) svm-predict.c svm.o -o svm-predict -lm
-svm-train: svm-train.c svm.o
-	$(CXX) $(CFLAGS) svm-train.c svm.o -o svm-train -lm
+.PHONY: gtsvm
+gtsvm:
+	$(MAKE) -C gtsvm all
+
+svm-predict: svm-predict.c svm.o gtsvm
+	$(CXX) $(CFLAGS) svm-predict.c svm.o -o svm-predict -L./gtsvm/lib -lm -lgtsvm -lcudart
+svm-train: svm-train.c svm.o gtsvm
+	$(CXX) $(CFLAGS) svm-train.c svm.o -o svm-train -L./gtsvm/lib -lm -lgtsvm -lcudart
 svm-scale: svm-scale.c
 	$(CXX) $(CFLAGS) svm-scale.c -o svm-scale
 svm.o: svm.cpp svm.h
-	$(CXX) $(CFLAGS) -c svm.cpp
+	$(CXX) -I./gtsvm/lib -DUSE_GTSVM $(CFLAGS) -c svm.cpp
 clean:
 	rm -f *~ svm.o svm-train svm-predict svm-scale libsvm.so.$(SHVER)

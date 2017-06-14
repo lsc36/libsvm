@@ -7,6 +7,8 @@
 #include <stdarg.h>
 #include <limits.h>
 #include <locale.h>
+#include <vector>
+#include <gtsvm.h>
 #include "svm.h"
 int libsvm_version = LIBSVM_VERSION;
 typedef float Qfloat;
@@ -1441,6 +1443,131 @@ static void solve_c_svc(
 	const svm_problem *prob, const svm_parameter* param,
 	double *alpha, Solver::SolutionInfo* si, double Cp, double Cn)
 {
+#ifdef USE_GTSVM
+	if (!(Cp == param->C && Cn == param->C))
+	{
+		fprintf(stderr, "Weighted C not supported\n");
+		exit(1);
+	}
+
+	GTSVM_Kernel kernel = GTSVM_KERNEL_UNKNOWN;
+	float gamma = static_cast<float>(param->gamma);
+	float coef0 = static_cast<float>(param->coef0);
+	float degree = static_cast<float>(param->degree);
+
+	switch (param->kernel_type)
+	{
+		case LINEAR:
+			gamma = 1;
+			coef0 = 0;
+			degree = 1;
+			// Fall through
+		case POLY:
+			kernel = GTSVM_KERNEL_POLYNOMIAL;
+			break;
+		case RBF:
+			kernel = GTSVM_KERNEL_GAUSSIAN;
+			break;
+		case SIGMOID:
+			kernel = GTSVM_KERNEL_SIGMOID;
+			break;
+		case PRECOMPUTED:
+			fprintf(stderr, "Precomputed kernel not supported\n");
+			exit(1);
+	}
+
+	// Convert svm_problem to GTSVM input
+	int columns = 0;
+	std::vector<int32_t> labels;
+	std::vector<float> values;
+	std::vector<size_t> indices;
+	std::vector<size_t> offsets;
+
+	offsets.push_back(0);
+
+	for (int i = 0; i < prob->l; i++)
+	{
+		int label = static_cast<int>(prob->y[i]);
+		labels.push_back(label);
+
+		for (int j = 0; prob->x[i][j].index != -1; j++) {
+			indices.push_back(prob->x[i][j].index);
+			values.push_back(static_cast<float>(prob->x[i][j].value));
+			if (prob->x[i][j].index + 1 > columns)
+				columns = prob->x[i][j].index + 1;
+		}
+
+		offsets.push_back(values.size());
+	}
+
+#define GTSVM_CHECK(is_error) \
+	if (is_error) { fprintf(stderr, "GTSVM Error: %s\n", GTSVM_Error()); exit(1); }
+
+	GTSVM_Context context;
+
+	GTSVM_CHECK(GTSVM_Create(&context));
+
+	GTSVM_CHECK(GTSVM_InitializeSparse(
+		context,
+		&values[0],
+		&indices[0],
+		&offsets[0],
+		GTSVM_TYPE_FLOAT,
+		&labels[0],
+		GTSVM_TYPE_INT32,
+		prob->l,
+		columns,
+		false,  // columnMajor
+		false,  // multiclass
+		static_cast<float>(param->C),
+		kernel,
+		gamma,
+		coef0,
+		degree,
+		true,  // biased
+		false,  // smallClusters
+		64  // activeClusters
+	));
+
+	int iter = 0;
+	int const max_iter = max(10000000, prob->l > INT_MAX / 100 ? INT_MAX : 100 * prob->l);
+	int const repetitions = 256;    // must be a multiple of 16
+	int counter = min(prob->l, 1000) + 1;
+
+	double primal = INF, dual = -INF;
+
+	for (; iter < max_iter; iter += repetitions) {
+		counter -= repetitions;
+		while (counter <= 0)
+		{
+			counter += min(prob->l, 1000);
+			info(".");
+		}
+
+		GTSVM_CHECK(GTSVM_Optimize(context, &primal, &dual, repetitions));
+
+		if (2 * (primal - dual) < param->eps * (primal + dual))
+			break;
+	}
+
+	if (iter >= max_iter)
+		fprintf(stderr, "\nWARNING: reaching max number of iterations\n");
+
+	info("\noptimization finished, #iter = %d\n",iter);
+
+	// Fetch and convert result from GTSVM model
+	GTSVM_CHECK(GTSVM_GetAlphas(context, alpha, GTSVM_TYPE_DOUBLE, false));
+	for (int i = 0; i < prob->l; i++)
+		alpha[i] *= prob->y[i];
+
+	si->obj = -dual;
+	GTSVM_CHECK(GTSVM_GetBias(context, &si->rho));
+	si->rho = -si->rho;
+	si->upper_bound_p = Cp;
+	si->upper_bound_n = Cn;
+
+	GTSVM_CHECK(GTSVM_Destroy(context));
+#else
 	int l = prob->l;
 	double *minus_ones = new double[l];
 	schar *y = new schar[l];
@@ -1470,6 +1597,7 @@ static void solve_c_svc(
 
 	delete[] minus_ones;
 	delete[] y;
+#endif  // USE_GTSVM
 }
 
 static void solve_nu_svc(
