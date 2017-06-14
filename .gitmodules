@@ -1,0 +1,3 @@
+[submodule "gtsvm"]
+	path = gtsvm
+	url = https://github.com/lsc36/gtsvm.git
