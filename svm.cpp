@@ -1436,20 +1436,10 @@ private:
 	double *QD;
 };
 
-//
-// construct and solve various formulations
-//
-static void solve_c_svc(
+static void gtsvm_solve_c_svc(
 	const svm_problem *prob, const svm_parameter* param,
 	double *alpha, Solver::SolutionInfo* si, double Cp, double Cn)
 {
-#ifdef USE_GTSVM
-	if (!(Cp == param->C && Cn == param->C))
-	{
-		fprintf(stderr, "Weighted C not supported\n");
-		exit(1);
-	}
-
 	GTSVM_Kernel kernel = GTSVM_KERNEL_UNKNOWN;
 	float gamma = static_cast<float>(param->gamma);
 	float coef0 = static_cast<float>(param->coef0);
@@ -1471,8 +1461,8 @@ static void solve_c_svc(
 		case SIGMOID:
 			kernel = GTSVM_KERNEL_SIGMOID;
 			break;
-		case PRECOMPUTED:
-			fprintf(stderr, "Precomputed kernel not supported\n");
+		default:
+			fprintf(stderr, "ERROR: unexpected kernel_type %d\n", param->kernel_type);
 			exit(1);
 	}
 
@@ -1567,7 +1557,22 @@ static void solve_c_svc(
 	si->upper_bound_n = Cn;
 
 	GTSVM_CHECK(GTSVM_Destroy(context));
-#else
+}
+
+//
+// construct and solve various formulations
+//
+static void solve_c_svc(
+	const svm_problem *prob, const svm_parameter* param,
+	double *alpha, Solver::SolutionInfo* si, double Cp, double Cn)
+{
+	if (!(Cp == param->C && Cn == param->C))
+		fprintf(stderr, "WARNING: weighted C not supported, disabling GTSVM\n");
+	else if (param->kernel_type == PRECOMPUTED)
+		fprintf(stderr, "WARNING: precomputed kernel not supported, disabling GTSVM\n");
+	else
+		return gtsvm_solve_c_svc(prob, param, alpha, si, Cp, Cn);
+
 	int l = prob->l;
 	double *minus_ones = new double[l];
 	schar *y = new schar[l];
@@ -1597,7 +1602,6 @@ static void solve_c_svc(
 
 	delete[] minus_ones;
 	delete[] y;
-#endif  // USE_GTSVM
 }
 
 static void solve_nu_svc(
