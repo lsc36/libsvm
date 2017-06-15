@@ -1480,11 +1480,11 @@ static void gtsvm_solve_c_svc(
 		int label = static_cast<int>(prob->y[i]);
 		labels.push_back(label);
 
-		for (int j = 0; prob->x[i][j].index != -1; j++) {
-			indices.push_back(prob->x[i][j].index);
-			values.push_back(static_cast<float>(prob->x[i][j].value));
-			if (prob->x[i][j].index + 1 > columns)
-				columns = prob->x[i][j].index + 1;
+		for (svm_node *x = prob->x[i]; x->index != -1; x++) {
+			indices.push_back(x->index);
+			values.push_back(static_cast<float>(x->value));
+			if (x->index + 1 > columns)
+				columns = x->index + 1;
 		}
 
 		offsets.push_back(values.size());
