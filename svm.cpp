@@ -2721,6 +2721,12 @@ double svm_predict(const svm_model *model, const svm_node *x)
 	return pred_result;
 }
 
+void svm_predict_bulk(const svm_model *model, svm_problem *prob)
+{
+	for (int i = 0; i < prob->l; i++)
+		prob->y[i] = svm_predict(model, prob->x[i]);
+}
+
 double svm_predict_probability(
 	const svm_model *model, const svm_node *x, double *prob_estimates)
 {
