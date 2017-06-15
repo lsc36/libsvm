@@ -2578,8 +2578,23 @@ void svm_cross_validation(const svm_problem *prob, const svm_parameter *param, i
 			free(prob_estimates);
 		}
 		else
-			for(j=begin;j<end;j++)
-				target[perm[j]] = svm_predict(submodel,prob->x[perm[j]]);
+		{
+			struct svm_problem testprob;
+			testprob.l = end - begin;
+			testprob.x = Malloc(struct svm_node *, testprob.l);
+			testprob.y = Malloc(double, testprob.l);
+
+			for (j = begin; j < end; j++)
+				testprob.x[j - begin] = prob->x[perm[j]];
+
+			svm_predict_bulk(submodel, &testprob);
+
+			for (j = begin; j < end; j++)
+				target[perm[j]] = testprob.y[j - begin];
+
+			free(testprob.x);
+			free(testprob.y);
+		}
 		svm_free_and_destroy_model(&submodel);
 		free(subprob.x);
 		free(subprob.y);
