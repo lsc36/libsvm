@@ -52,7 +52,7 @@ void predict(FILE *input, FILE *output)
 	int svm_type=svm_get_svm_type(model);
 	int nr_class=svm_get_nr_class(model);
 	double *prob_estimates=NULL;
-	int j;
+	int i, j;
 
 	if(predict_probability)
 	{
@@ -71,23 +71,36 @@ void predict(FILE *input, FILE *output)
 		}
 	}
 
+	int capacity = 256;
+	double *target_labels = (double *) malloc(capacity * sizeof(double));
+	struct svm_problem testprob;
+	testprob.x = (struct svm_node **) malloc(capacity * sizeof(struct svm_node *));
+
 	max_line_len = 1024;
 	line = (char *)malloc(max_line_len*sizeof(char));
 	while(readline(input) != NULL)
 	{
-		int i = 0;
-		double target_label, predict_label;
 		char *idx, *val, *label, *endptr;
 		int inst_max_index = -1; // strtol gives 0 if wrong format, and precomputed kernel has <index> start from 0
+
+		if (capacity == total + 1)
+		{
+			capacity *= 2;
+			target_labels = (double *) realloc(target_labels, capacity * sizeof(double));
+			testprob.x = (struct svm_node **) realloc(testprob.x, capacity * sizeof(struct svm_node *));
+		}
 
 		label = strtok(line," \t\n");
 		if(label == NULL) // empty line
 			exit_input_error(total+1);
 
-		target_label = strtod(label,&endptr);
+		target_labels[total] = strtod(label, &endptr);
 		if(endptr == label || *endptr != '\0')
 			exit_input_error(total+1);
 
+		x = (struct svm_node *) malloc(max_nr_attr * sizeof(struct svm_node));
+
+		i = 0;
 		while(1)
 		{
 			if(i>=max_nr_attr-1)	// need one more for index = -1
@@ -116,21 +129,35 @@ void predict(FILE *input, FILE *output)
 			++i;
 		}
 		x[i].index = -1;
+		testprob.x[total] = x;
+		++total;
+	}
 
-		if (predict_probability && (svm_type==C_SVC || svm_type==NU_SVC))
+	testprob.l = total;
+	testprob.y = (double *) malloc(total * sizeof(double));
+
+	if (predict_probability && (svm_type==C_SVC || svm_type==NU_SVC))
+	{
+		for (i = 0; i < total; i++)
 		{
-			predict_label = svm_predict_probability(model,x,prob_estimates);
-			fprintf(output,"%g",predict_label);
+			testprob.y[i] = svm_predict_probability(model, x, prob_estimates);
+			fprintf(output, "%g", testprob.y[i]);
 			for(j=0;j<nr_class;j++)
 				fprintf(output," %g",prob_estimates[j]);
 			fprintf(output,"\n");
 		}
-		else
-		{
-			predict_label = svm_predict(model,x);
-			fprintf(output,"%g\n",predict_label);
-		}
+	}
+	else
+	{
+		svm_predict_bulk(model, &testprob);
+		for (i = 0; i < total; i++)
+			fprintf(output, "%g\n", testprob.y[i]);
+	}
 
+	for (i = 0; i < total; i++)
+	{
+		double predict_label = testprob.y[i];
+		double target_label = target_labels[i];
 		if(predict_label == target_label)
 			++correct;
 		error += (predict_label-target_label)*(predict_label-target_label);
@@ -139,8 +166,13 @@ void predict(FILE *input, FILE *output)
 		sumpp += predict_label*predict_label;
 		sumtt += target_label*target_label;
 		sumpt += predict_label*target_label;
-		++total;
 	}
+
+	for (i = 0; i < total; i++)
+		free(testprob.x[i]);
+	free(testprob.x);
+	free(testprob.y);
+
 	if (svm_type==NU_SVR || svm_type==EPSILON_SVR)
 	{
 		info("Mean squared error = %g (regression)\n",error/total);
@@ -231,7 +263,6 @@ int main(int argc, char **argv)
 
 	predict(input,output);
 	svm_free_and_destroy_model(&model);
-	free(x);
 	free(line);
 	fclose(input);
 	fclose(output);
